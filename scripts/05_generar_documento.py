@@ -11,7 +11,7 @@ import json, os, re, sys
 import pandas as pd
 from docx import Document
 from docx.enum.text import WD_COLOR_INDEX, WD_ALIGN_PARAGRAPH
-from docx.shared import Pt, Cm
+from docx.shared import Pt, Cm, RGBColor
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 
@@ -27,12 +27,38 @@ COLAB = os.environ.get("COLAB_URL", "[URL del cuaderno de Google Colab]")
 SALIDA = sys.argv[1] if len(sys.argv) > 1 else "ACA2_contenido_nuevo.docx"
 TAB_N, FIG_N = [28], [42]          # la numeración continúa la del ACA 1 (última: Tabla 27, Figura 41)
 
-doc = Document()
-st = doc.styles["Normal"]; st.font.name = "Times New Roman"; st.font.size = Pt(12)
-st.element.rPr.rFonts.set(qn("w:eastAsia"), "Times New Roman")
-st.paragraph_format.space_after = Pt(6); st.paragraph_format.line_spacing = 1.3
-for s in doc.sections:
-    s.left_margin = s.right_margin = Cm(2.5)
+BASE_DOCX = os.environ.get("BASE_DOCX")
+doc = Document(BASE_DOCX) if BASE_DOCX else Document()
+N_BASE = len(doc.element.body)     # elementos previos (cuando se escribe sobre un documento existente)
+# ---- Formato APA 7: Times New Roman 12, texto negro, doble espacio, márgenes de 2,54 cm, sangría de 1,27 cm
+NEGRO, FUENTE = RGBColor(0, 0, 0), "Times New Roman"
+st = doc.styles["Normal"]; st.font.name = FUENTE; st.font.size = Pt(12); st.font.color.rgb = NEGRO
+st.element.rPr.rFonts.set(qn("w:eastAsia"), FUENTE)
+st.paragraph_format.space_before = st.paragraph_format.space_after = Pt(0)
+st.paragraph_format.line_spacing = 2.0; st.paragraph_format.first_line_indent = Cm(1.27)
+for nivel, (alin, cursiva) in {1: (WD_ALIGN_PARAGRAPH.CENTER, False), 2: (WD_ALIGN_PARAGRAPH.LEFT, False),
+                               3: (WD_ALIGN_PARAGRAPH.LEFT, True)}.items():
+    hs = doc.styles[f"Heading {nivel}"]
+    hs.font.name = FUENTE; hs.font.size = Pt(12); hs.font.bold = True; hs.font.italic = cursiva; hs.font.color.rgb = NEGRO
+    rf = hs.element.rPr.rFonts
+    for a in ("w:asciiTheme", "w:hAnsiTheme", "w:eastAsiaTheme", "w:cstheme"):
+        rf.attrib.pop(qn(a), None)
+    for a in ("w:ascii", "w:hAnsi", "w:eastAsia", "w:cs"):
+        rf.set(qn(a), FUENTE)
+    pf = hs.paragraph_format
+    pf.alignment = alin; pf.first_line_indent = Cm(0); pf.space_before = pf.space_after = Pt(0)
+    pf.line_spacing = 2.0; pf.keep_with_next = True
+for s_ in doc.sections:
+    s_.orientation = 0; s_.page_width, s_.page_height = Cm(21.59), Cm(27.94)       # carta, vertical
+    s_.left_margin = s_.right_margin = s_.top_margin = s_.bottom_margin = Cm(2.54)
+    enc = s_.header.paragraphs[0]; enc.alignment = WD_ALIGN_PARAGRAPH.RIGHT; enc.paragraph_format.first_line_indent = Cm(0)
+    run_ = enc.add_run(); run_.font.name = FUENTE; run_.font.size = Pt(12)
+    for tipo, txt in (("begin", None), (None, " PAGE "), ("end", None)):      # número de página arriba a la derecha
+        if tipo:
+            e = OxmlElement("w:fldChar"); e.set(qn("w:fldCharType"), tipo)
+        else:
+            e = OxmlElement("w:instrText"); e.set(qn("xml:space"), "preserve"); e.text = txt
+        run_._r.append(e)
 
 
 # ------------------------------------------------------------------ utilidades
@@ -66,7 +92,6 @@ def p(texto, negrita_inicio=None):
     if negrita_inicio:
         par.add_run(negrita_inicio).bold = True
     par.add_run(texto)
-    par.paragraph_format.first_line_indent = Cm(0)
     return par
 
 
@@ -79,7 +104,8 @@ def pendiente(texto):
 
 def bullets(items):
     for it in items:
-        doc.add_paragraph(it, style="List Bullet")
+        par = doc.add_paragraph(it, style="List Bullet")
+        par.paragraph_format.left_indent = Cm(1.9); par.paragraph_format.first_line_indent = Cm(-0.63)
 
 
 def _borde(celda, **kw):
@@ -95,9 +121,9 @@ def _borde(celda, **kw):
 def tabla(df, titulo, nota, anchos=None, fuente=9):
     """Tabla en estilo APA 7: número en negrita, título en cursiva, solo líneas horizontales."""
     n = TAB_N[0]; TAB_N[0] += 1
-    c = doc.add_paragraph(); c.paragraph_format.keep_with_next = True
+    c = doc.add_paragraph(); c.paragraph_format.keep_with_next = True; c.paragraph_format.first_line_indent = Cm(0)
     c.add_run(f"Tabla {n}").bold = True
-    t = doc.add_paragraph(); t.paragraph_format.keep_with_next = True
+    t = doc.add_paragraph(); t.paragraph_format.keep_with_next = True; t.paragraph_format.first_line_indent = Cm(0)
     t.add_run(titulo).italic = True
     tb = doc.add_table(rows=1, cols=len(df.columns))
     for j, col in enumerate(df.columns):
@@ -112,11 +138,28 @@ def tabla(df, titulo, nota, anchos=None, fuente=9):
             r.font.size = Pt(fuente)
     for cel in tb.rows[-1].cells:
         _borde(cel, bottom="single")
+    if not anchos:                       # anchos proporcionales al contenido (ancho útil 15,9 cm)
+        L = []
+        for j, col in enumerate(df.columns):
+            ls = sorted(len(str(x)) for x in df.iloc[:, j])
+            L.append(min(max(len(str(col)) * 0.6, ls[int(0.9 * (len(ls) - 1))] if ls else 4, 5), 48))
+        anchos = [max(1.6, 15.9 * l / sum(L)) for l in L]
+        anchos = [a * 15.9 / sum(anchos) for a in anchos]
+    tb.autofit = False
+    for fila in tb.rows:
+        for cel in fila.cells:
+            for pc in cel.paragraphs:
+                pc.alignment = WD_ALIGN_PARAGRAPH.LEFT
     if anchos:
         for fila in tb.rows:
             for j, w in enumerate(anchos):
                 fila.cells[j].width = Cm(w)
-    q = doc.add_paragraph()
+    for fila in tb.rows:
+        for cel in fila.cells:
+            for pc in cel.paragraphs:
+                pc.paragraph_format.first_line_indent = Cm(0); pc.paragraph_format.line_spacing = 1.0
+    q = doc.add_paragraph(); q.paragraph_format.first_line_indent = Cm(0)
+    q.paragraph_format.line_spacing = 1.0; q.paragraph_format.space_after = Pt(12)
     q.add_run("Nota. ").italic = True
     q.add_run(nota)
     for r in q.runs:
@@ -129,13 +172,15 @@ def figura(archivo, titulo, nota, ancho=14):
     if not os.path.exists(ruta):
         return pendiente(f"figura {archivo} (se genera con los scripts)")
     n = FIG_N[0]; FIG_N[0] += 1
-    c = doc.add_paragraph(); c.paragraph_format.keep_with_next = True
+    c = doc.add_paragraph(); c.paragraph_format.keep_with_next = True; c.paragraph_format.first_line_indent = Cm(0)
     c.add_run(f"Figura {n}").bold = True
-    t = doc.add_paragraph(); t.paragraph_format.keep_with_next = True
+    t = doc.add_paragraph(); t.paragraph_format.keep_with_next = True; t.paragraph_format.first_line_indent = Cm(0)
     t.add_run(titulo).italic = True
-    doc.add_picture(ruta, width=Cm(ancho))
-    doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
-    q = doc.add_paragraph()
+    doc.add_picture(ruta, width=Cm(min(ancho, 15.9)))
+    img = doc.paragraphs[-1]; img.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    img.paragraph_format.first_line_indent = Cm(0); img.paragraph_format.line_spacing = 1.0; img.paragraph_format.keep_with_next = True
+    q = doc.add_paragraph(); q.paragraph_format.first_line_indent = Cm(0)
+    q.paragraph_format.line_spacing = 1.0; q.paragraph_format.space_after = Pt(12)
     q.add_run("Nota. ").italic = True
     q.add_run(nota)
     for r in q.runs:
@@ -162,8 +207,8 @@ p("Esta parte reúne el contenido que responde a cada observación de la retroal
 h("Disponibilidad de datos y código (insertar antes de la Sección 8)", 2)
 p("El código desarrollado en el proyecto es público y puede ejecutarse de forma independiente. El repositorio de GitHub "
   f"({REPO}) contiene las funciones, los scripts numerados de cada fase, los cuadernos para Google Colab ({COLAB}), el archivo "
-  "de requerimientos, el protocolo de evaluación y la bitácora de decisiones. Los diagramas de flujo de esta sección "
-  "reemplazan las capturas de código del documento anterior; el código completo se encuentra en el repositorio.")
+  "de requerimientos, el protocolo de evaluación y la bitácora de decisiones. Los diagramas de flujo del Objetivo 1 "
+  "sustituyen las capturas de código del documento anterior; el código completo se encuentra en el repositorio.")
 p("Los datos son institucionales y no se publican, por tratarse de información interna del hospital. Antes de cualquier "
   "procesamiento se retiraron los campos de pacientes y ventas. La Ficha técnica (Tabla 28) y el Diccionario de datos "
   "(Tabla 29) describen cada fuente. Para verificar que el código se ejecuta, el repositorio incluye un generador de datos "
@@ -189,7 +234,7 @@ if dd is not None:
     tabla(d2[["Fuente", "Variable", "Tipo", "Descripción", "% nulos", "Valores únicos"]],
           "Diccionario de datos de las fuentes maestras",
           "El porcentaje de nulos se calculó sobre cada fuente tras eliminar los duplicados exactos de la Biblia. "
-          "Fuente: elaboración propia.", fuente=7.5)
+          "Fuente: elaboración propia.", fuente=8)
     if not (dd["Fuente"] == "Base analítica (consumo)").any():
         pendiente("agregar las filas de la base analítica de consumo: ejecutar scripts/01_diccionario_y_ficha.py con data/base_analitica.parquet")
 
@@ -330,8 +375,8 @@ p("La evaluación es de origen móvil: para cada mes de origen se estiman los pa
 figura("flujo_04_evaluacion.png", "Protocolo de evaluación retrospectiva de origen móvil", "Fuente: elaboración propia.", ancho=11)
 
 # ---- A7 Diagramas del Objetivo 1
-h("Diagramas de flujo que reemplazan las capturas de código del Objetivo 1", 2)
-figura("flujo_01_etl_objetivo1.png", "Flujo de extracción, depuración y construcción de la base analítica (reemplaza las Figuras 1 a 23)",
+h("Diagramas de flujo generales del Objetivo 1", 2)
+figura("flujo_01_etl_objetivo1.png", "Flujo general de extracción, depuración y construcción de la base analítica",
        "El código ejecutable se encuentra en el repositorio. Fuente: elaboración propia.", ancho=11)
 figura("flujo_05_arquitectura.png", "Arquitectura de la solución", "Fuente: elaboración propia.", ancho=11)
 
@@ -613,18 +658,23 @@ if os.path.exists(ruta_b):
     filas = [[c.strip() for c in l.strip().strip("|").split("|")] for l in open(ruta_b, encoding="utf-8")
              if l.startswith("| D-")]
     tabla(pd.DataFrame(filas, columns=["ID", "Fase", "Decisión", "Alternativa considerada", "Justificación / evidencia", "Estado"]),
-          "Bitácora de decisiones de depuración y modelado", "Fuente: elaboración propia.", fuente=7)
+          "Bitácora de decisiones de depuración y modelado", "Fuente: elaboración propia.", fuente=8)
 
 h("Referencias nuevas y corregidas (APA 7)", 1)
 p("Reemplazan o se agregan a la lista del ACA 1. Orden alfabético y sangría francesa. Verificar cada DOI antes de entregar.")
 refs = [
-    "Hyndman, R. J., & Athanasopoulos, G. (2021). Forecasting: Principles and practice (3.ª ed.). OTexts. https://otexts.com/fpp3/",
-    "Kabera, J. C., & Mukanyangezi, M. F. (2024). Influence of inventory management practices on the availability of emergency obstetric drugs in Rwandan public hospitals: A case of Rwanda Southern Province. BMC Health Services Research, 24, Artículo 14. https://doi.org/10.1186/s12913-023-10459-x",
-    "Rehman, A. U., Mian, S. H., Usmani, Y. S., Abidi, M. H., & Mohammed, M. K. (2023). Modelling and analysis of hospital inventory policies during COVID-19 pandemic. Processes, 11(4), 1062. https://doi.org/10.3390/pr11041062",
-    "Syntetos, A. A., & Boylan, J. E. (2005). The accuracy of intermittent demand estimates. International Journal of Forecasting, 21(2), 303–314. https://doi.org/10.1016/j.ijforecast.2004.10.001",
+    [("Hyndman, R. J., & Athanasopoulos, G. (2021). ", 0), ("Forecasting: Principles and practice", 1), (" (3.ª ed.). OTexts. https://otexts.com/fpp3/", 0)],
+    [("Kabera, J. C., & Mukanyangezi, M. F. (2024). Influence of inventory management practices on the availability of emergency obstetric drugs in Rwandan public hospitals: A case of Rwanda Southern Province. ", 0),
+     ("BMC Health Services Research, 24", 1), (", Artículo 14. https://doi.org/10.1186/s12913-023-10459-x", 0)],
+    [("Rehman, A. U., Mian, S. H., Usmani, Y. S., Abidi, M. H., & Mohammed, M. K. (2023). Modelling and analysis of hospital inventory policies during COVID-19 pandemic. ", 0),
+     ("Processes, 11", 1), ("(4), 1062. https://doi.org/10.3390/pr11041062", 0)],
+    [("Syntetos, A. A., & Boylan, J. E. (2005). The accuracy of intermittent demand estimates. ", 0),
+     ("International Journal of Forecasting, 21", 1), ("(2), 303–314. https://doi.org/10.1016/j.ijforecast.2004.10.001", 0)],
 ]
-for r in refs:
-    par = doc.add_paragraph(r)
+for partes in refs:
+    par = doc.add_paragraph()
+    for txt, cur in partes:
+        par.add_run(txt).italic = bool(cur)
     par.paragraph_format.left_indent = Cm(1.27); par.paragraph_format.first_line_indent = Cm(-1.27)
 
 doc.save(SALIDA)

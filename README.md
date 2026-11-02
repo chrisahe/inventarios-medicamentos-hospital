@@ -13,12 +13,16 @@ con datos de enero de 2024 a mayo de 2026.
 src/inventario.py                       funciones (costos, ABC, VED, políticas, evaluación)
 scripts/00_diagramas_de_flujo.py        diagramas de flujo de los procesos
 scripts/00b_construir_base_analitica.py depuración y base analítica a partir de los 29 archivos mensuales
+scripts/00c_diagramas_pasos_objetivo1.py diagramas de flujo por paso del Objetivo 1 (reemplazan las capturas de código)
 scripts/01_diccionario_y_ficha.py       diccionario de datos y ficha técnica
 scripts/02_costos_y_linea_base.py       costo unitario y línea base de inventario
 scripts/02b_estabilidad_temporal.py     ¿la caída del consumo fue generalizada o concentrada?
 scripts/03_objetivo2_clasificacion_abc_ved.py   Objetivo 2
 scripts/04_objetivo3_niveles_inventario.py      Objetivo 3 y evaluación
 scripts/04b_diagnostico_vitales.py      diagnóstico del criterio C1 (vitales por patrón)
+scripts/05_generar_documento.py         contenido nuevo del documento (Secciones 8.13 a 8.16) a partir de los resultados
+scripts/06_integrar_documento.py        integra el contenido nuevo en el documento del ACA 1 (APA 7)
+scripts/07_ajustes_finales.py           ajustes finales (ecuaciones de Word, párrafos repetidos)
 notebooks/                              mismos scripts como cuadernos (Colab)
 docs/                                   protocolo de evaluación, bitácora de decisiones
 outputs/figuras/                        figuras generadas (las tablas con datos por producto no se publican)
